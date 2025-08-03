@@ -4,6 +4,24 @@ import pandas as pd
 from db import upsert, delete, fetchall
 from utils import compute_markdown_price
 
+# Function to generate next SKU
+def generate_next_sku():
+    from datetime import datetime
+    year_month = datetime.now().strftime("%y%m")  # YYMM format
+    
+    cols, rows = fetchall(f"SELECT sku FROM items WHERE sku LIKE 'BH-{year_month}-%' ORDER BY sku DESC LIMIT 1")
+    if rows:
+        last_sku = rows[0][0]
+        # Extract number from BH-2508-0001 format
+        try:
+            last_num = int(last_sku.split('-')[2])
+            next_num = last_num + 1
+            return f"BH-{year_month}-{next_num:04d}"
+        except:
+            return f"BH-{year_month}-0001"
+    else:
+        return f"BH-{year_month}-0001"
+
 st.set_page_config(page_title="Itens", layout="wide")
 st.title("Itens")
 
@@ -34,16 +52,29 @@ if 'item_form_data' not in st.session_state:
         'channel_listed': 'Loja',
         'photos_url': '',
         'notes': '',
-        'active': True
+        'active': True,
+        'is_editing': False
     }
 
 with st.form("add_item", clear_on_submit=False):
-    st.subheader("Adicionar / Atualizar")
+    st.subheader("Adicionar / Atualizar Item")
     
     # Get current form values from session state
     form_data = st.session_state.item_form_data
     
-    sku = st.text_input("SKU (ex.: BH-2508-0001)", value=form_data['sku'])
+    # Auto-generate SKU for new items, or show existing SKU for editing
+    if st.session_state.item_form_data['is_editing']:
+        sku = st.text_input("SKU", value=form_data['sku'], disabled=True)
+        st.caption("SKU não pode ser alterado durante edição")
+    else:
+        if not st.session_state.item_form_data['sku']:
+            auto_sku = generate_next_sku()
+            st.session_state.item_form_data['sku'] = auto_sku
+        
+        sku = st.text_input("SKU (gerado automaticamente)", 
+                           value=form_data['sku'], 
+                           disabled=True)
+        st.caption("SKU será gerado automaticamente no formato BH-YYMM-NNNN")
     consignor_id = st.text_input("ConsignanteID (ou deixe vazio para doação)", value=form_data['consignor_id'])
     acquisition_type = st.selectbox("Tipo de aquisição", ["consignação", "doação", "compra"], 
                                    index=["consignação", "doação", "compra"].index(form_data['acquisition_type']))
@@ -96,9 +127,15 @@ with st.form("add_item", clear_on_submit=False):
         clear_form = st.form_submit_button("Limpar Formulário")
     
     if submitted:
+        # Generate final SKU if creating new item
+        if not st.session_state.item_form_data['is_editing']:
+            final_sku = generate_next_sku()
+        else:
+            final_sku = sku
+        
         # Update session state with current form values
         st.session_state.item_form_data.update({
-            'sku': sku,
+            'sku': final_sku,
             'consignor_id': consignor_id,
             'acquisition_type': acquisition_type,
             'category': category,
@@ -125,12 +162,12 @@ with st.form("add_item", clear_on_submit=False):
             'active': active
         })
         
-        if not sku:
-            st.error("❌ SKU é obrigatório.")
+        if not category or list_price <= 0:
+            st.error("❌ Categoria e Preço de lista são obrigatórios.")
         else:
             try:
                 upsert("items", "sku", dict(
-                    sku=sku, consignor_id=consignor_id or None, acquisition_type=acquisition_type,
+                    sku=final_sku, consignor_id=consignor_id or None, acquisition_type=acquisition_type,
                     category=category, subcategory=subcategory, brand=brand, gender=gender, size=size, fit=fit,
                     color=color, fabric=fabric, condition=condition, flaws=flaws, bust=bust, waist=waist, length=length,
                     cost=cost, list_price=list_price, markdown_stage=int(stage), acquired_at=str(acquired_at), listed_at=str(listed_at),
@@ -138,7 +175,7 @@ with st.form("add_item", clear_on_submit=False):
                     photos_url=photos_url, notes=notes, active=int(active)
                 ))
                 current_price = compute_markdown_price(list_price, int(stage))
-                st.success(f"✅ Item {sku} salvo com sucesso! Preço atual com desconto: R$ {current_price:.2f}")
+                st.success(f"✅ Item {final_sku} salvo com sucesso! Preço atual: R$ {current_price:.2f}")
                 
                 # Clear form only after successful save
                 st.session_state.item_form_data = {
@@ -166,7 +203,8 @@ with st.form("add_item", clear_on_submit=False):
                     'channel_listed': 'Loja',
                     'photos_url': '',
                     'notes': '',
-                    'active': True
+                    'active': True,
+                    'is_editing': False
                 }
                 st.rerun()
             except Exception as e:

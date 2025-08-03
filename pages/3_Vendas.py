@@ -3,6 +3,24 @@ import streamlit as st
 import pandas as pd
 from db import upsert, delete, fetchall
 
+# Function to generate next sale ID
+def generate_next_sale_id():
+    from datetime import datetime
+    year_month = datetime.now().strftime("%y%m")  # YYMM format
+    
+    cols, rows = fetchall(f"SELECT id FROM sales WHERE id LIKE 'V{year_month}%' ORDER BY id DESC LIMIT 1")
+    if rows:
+        last_id = rows[0][0]
+        # Extract number from V2508001 format
+        try:
+            last_num = int(last_id[5:])  # After V2508
+            next_num = last_num + 1
+            return f"V{year_month}{next_num:03d}"
+        except:
+            return f"V{year_month}001"
+    else:
+        return f"V{year_month}001"
+
 st.set_page_config(page_title="Vendas", layout="wide")
 st.title("Vendas")
 
@@ -18,16 +36,25 @@ if 'sale_form_data' not in st.session_state:
         'customer_name': '',
         'customer_whatsapp': '',
         'payment': 'Pix',
-        'notes': ''
+        'notes': '',
+        'is_editing': False
     }
 
 with st.form("add_sale", clear_on_submit=False):
-    st.subheader("Registrar venda")
+    st.subheader("Registrar Venda")
     
     # Get current form values from session state
     form_data = st.session_state.sale_form_data
     
-    sale_id = st.text_input("VendaID (ex.: V0001)", value=form_data['sale_id'])
+    # Auto-generate Sale ID
+    if not st.session_state.sale_form_data['sale_id'] and not st.session_state.sale_form_data['is_editing']:
+        auto_id = generate_next_sale_id()
+        st.session_state.sale_form_data['sale_id'] = auto_id
+    
+    sale_id = st.text_input("Venda ID (gerado automaticamente)", 
+                           value=form_data['sale_id'], 
+                           disabled=True)
+    st.caption("ID será gerado automaticamente no formato VYYMMNNN")
     
     import datetime
     today = datetime.date.today()
@@ -55,9 +82,15 @@ with st.form("add_sale", clear_on_submit=False):
         clear_form = st.form_submit_button("Limpar Formulário")
     
     if submitted:
+        # Generate final sale ID if creating new sale
+        if not st.session_state.sale_form_data['is_editing']:
+            final_id = generate_next_sale_id()
+        else:
+            final_id = sale_id
+        
         # Update session state with current form values
         st.session_state.sale_form_data.update({
-            'sale_id': sale_id,
+            'sale_id': final_id,
             'date': date,
             'sku': sku,
             'price': price,
@@ -69,38 +102,44 @@ with st.form("add_sale", clear_on_submit=False):
             'notes': notes
         })
         
-        if not sale_id or not sku:
-            st.error("❌ VendaID e SKU são obrigatórios.")
+        if not sku or price <= 0:
+            st.error("❌ SKU e Preço de venda são obrigatórios.")
         else:
             try:
                 # Find consignor_id from item
                 cols, rows = fetchall("SELECT consignor_id FROM items WHERE sku=?", (sku,))
-                consignor_id = rows[0][0] if rows else None
-                
-                upsert("sales", "id", dict(
-                    id=sale_id, date=str(date), sku=sku, sale_price=price, discount_value=discount,
-                    channel=channel, customer_name=customer_name, customer_whatsapp=customer_whatsapp,
-                    payment_method=payment, notes=notes, consignor_id=consignor_id
-                ))
-                # Mark item as sold
-                fetchall("UPDATE items SET sold_at=?, sale_price=?, channel_sold=? WHERE sku=?", 
-                        (str(date), price, channel, sku))
-                st.success(f"✅ Venda {sale_id} registrada com sucesso! Consignante: {consignor_id or '—'}")
-                
-                # Clear form only after successful save
-                st.session_state.sale_form_data = {
-                    'sale_id': '',
-                    'date': None,
-                    'sku': '',
-                    'price': 0.0,
-                    'discount': 0.0,
-                    'channel': 'Loja',
-                    'customer_name': '',
-                    'customer_whatsapp': '',
-                    'payment': 'Pix',
-                    'notes': ''
-                }
-                st.rerun()
+                if not rows:
+                    st.error(f"❌ SKU {sku} não encontrado no estoque.")
+                else:
+                    consignor_id = rows[0][0] if rows else None
+                    
+                    upsert("sales", "id", dict(
+                        id=final_id, date=str(date), sku=sku, sale_price=price, discount_value=discount,
+                        channel=channel, customer_name=customer_name, customer_whatsapp=customer_whatsapp,
+                        payment_method=payment, notes=notes, consignor_id=consignor_id
+                    ))
+                    # Mark item as sold
+                    fetchall("UPDATE items SET sold_at=?, sale_price=?, channel_sold=? WHERE sku=?", 
+                            (str(date), price, channel, sku))
+                    
+                    net_value = price - discount
+                    st.success(f"✅ Venda {final_id} registrada! Valor líquido: R$ {net_value:.2f} | Consignante: {consignor_id or '—'}")
+                    
+                    # Clear form only after successful save
+                    st.session_state.sale_form_data = {
+                        'sale_id': '',
+                        'date': None,
+                        'sku': '',
+                        'price': 0.0,
+                        'discount': 0.0,
+                        'channel': 'Loja',
+                        'customer_name': '',
+                        'customer_whatsapp': '',
+                        'payment': 'Pix',
+                        'notes': '',
+                        'is_editing': False
+                    }
+                    st.rerun()
             except Exception as e:
                 st.error(f"❌ Erro ao registrar venda: {e}")
     
@@ -116,7 +155,8 @@ with st.form("add_sale", clear_on_submit=False):
             'customer_name': '',
             'customer_whatsapp': '',
             'payment': 'Pix',
-            'notes': ''
+            'notes': '',
+            'is_editing': False
         }
         st.rerun()
 
