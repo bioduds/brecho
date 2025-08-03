@@ -1,0 +1,6 @@
+streamlit>=1.36
+pandas>=2.2
+Pillow>=10
+qrcode>=7
+reportlab>=3.6
+plotly>=5.17
