@@ -30,6 +30,7 @@ if 'item_form_data' not in st.session_state:
     st.session_state.item_form_data = {
         'sku': '',
         'consignor_id': '',
+        'consignor_search': '',
         'acquisition_type': 'consignação',
         'category': 'Vestido',
         'subcategory': '',
@@ -75,7 +76,59 @@ with st.form("add_item", clear_on_submit=False):
                            value=form_data['sku'], 
                            disabled=True)
         st.caption("SKU será gerado automaticamente no formato BH-YYMM-NNNN")
-    consignor_id = st.text_input("ConsignanteID (ou deixe vazio para doação)", value=form_data['consignor_id'])
+    
+    # Consignor search with auto-complete
+    st.write("**Consignante:**")
+    consignor_search = st.text_input("Digite o nome do consignante (ou deixe vazio para doação)", 
+                                    value=form_data.get('consignor_search', ''),
+                                    key="consignor_search_input")
+    
+    # Get all consignors for search
+    cols, consignor_rows = fetchall("SELECT id, name FROM consignors WHERE active = 1 ORDER BY name")
+    consignor_options = []
+    selected_consignor_id = form_data['consignor_id']
+    
+    if consignor_rows:
+        consignor_options = [(row[0], row[1]) for row in consignor_rows]
+        
+        # Filter consignors based on search input
+        if consignor_search:
+            filtered_consignors = [
+                (id_, name) for id_, name in consignor_options 
+                if consignor_search.lower() in name.lower()
+            ]
+            
+            if filtered_consignors:
+                st.write("**Consignantes encontrados:**")
+                for id_, name in filtered_consignors[:5]:  # Show max 5 results
+                    col1, col2 = st.columns([3, 1])
+                    with col1:
+                        st.write(f"**{name}** ({id_})")
+                    with col2:
+                        if st.button("Selecionar", key=f"select_{id_}"):
+                            st.session_state.item_form_data['consignor_id'] = id_
+                            st.session_state.item_form_data['consignor_search'] = name
+                            st.rerun()
+            else:
+                st.warning("Nenhum consignante encontrado com esse nome.")
+    
+    # Show selected consignor
+    if selected_consignor_id:
+        # Find the name of the selected consignor
+        selected_name = next((name for id_, name in consignor_options if id_ == selected_consignor_id), "")
+        st.success(f"✅ Consignante selecionado: **{selected_name}** ({selected_consignor_id})")
+        
+        col1, col2 = st.columns([1, 1])
+        with col1:
+            if st.button("Limpar seleção"):
+                st.session_state.item_form_data['consignor_id'] = ''
+                st.session_state.item_form_data['consignor_search'] = ''
+                st.rerun()
+    else:
+        st.info("💝 Item será cadastrado como **doação** (sem consignante)")
+    
+    consignor_id = selected_consignor_id  # Use the selected ID
+    
     acquisition_type = st.selectbox("Tipo de aquisição", ["consignação", "doação", "compra"], 
                                    index=["consignação", "doação", "compra"].index(form_data['acquisition_type']))
     
@@ -181,6 +234,7 @@ with st.form("add_item", clear_on_submit=False):
                 st.session_state.item_form_data = {
                     'sku': '',
                     'consignor_id': '',
+                    'consignor_search': '',
                     'acquisition_type': 'consignação',
                     'category': 'Vestido',
                     'subcategory': '',
@@ -215,6 +269,7 @@ with st.form("add_item", clear_on_submit=False):
         st.session_state.item_form_data = {
             'sku': '',
             'consignor_id': '',
+            'consignor_search': '',
             'acquisition_type': 'consignação',
             'category': 'Vestido',
             'subcategory': '',
@@ -237,7 +292,8 @@ with st.form("add_item", clear_on_submit=False):
             'channel_listed': 'Loja',
             'photos_url': '',
             'notes': '',
-            'active': True
+            'active': True,
+            'is_editing': False
         }
         st.rerun()
 
